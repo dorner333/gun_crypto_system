@@ -6,6 +6,8 @@ import torch
 import torch.nn as nn
 from torch.optim import Adam
 from torch.autograd import Variable
+from torchvision import datasets, transforms
+
 import argparse
 import os
 import numpy as np
@@ -24,7 +26,7 @@ def get_args():
                         help="train model or load trained model for interence")
     parser.add_argument("--n",
                         type=int,
-                        default=16,
+                        default=784,
                         help="length of plaintext (message length)")
     parser.add_argument("--training_steps",
                         type=int,
@@ -60,7 +62,10 @@ def get_args():
 # end
 
 
-def train(gpu_available,
+def train(
+        train_loader,
+        test_loader,
+        gpu_available,
         prjPaths,
         n,
         training_steps,
@@ -107,77 +112,76 @@ def train(gpu_available,
     bob_reconstruction_error = nn.L1Loss()
     eve_reconstruction_error = nn.L1Loss()
 
-    # training loop
-    for step in range(training_steps+1):
-
-        # start time for step
+    for epoch in range(training_steps):
         tic = time.time()
+        for batch_idx, (data, target) in enumerate(train_loader):
+            # start time for step
 
-        # Training alternates between Alice/Bob and Eve
-        for network, num_minibatches in {"alice_bob": 1, "eve": 2}.items():
+            # Training alternates between Alice/Bob and Eve
+            for network, num_minibatches in {"alice_bob": 1, "eve": 2}.items():
 
-            """ 
-            Alice/Bob training for one minibatch, and then Eve training for two minibatches this ratio 
-            in order to give a slight computational edge to the adversary Eve without training it so much
-            that it becomes excessively specific to the exact current parameters of Alice and Bob
-            """
-            for minibatch in range(num_minibatches):
+                """ 
+                Alice/Bob training for one minibatch, and then Eve training for two minibatches this ratio 
+                in order to give a slight computational edge to the adversary Eve without training it so much
+                that it becomes excessively specific to the exact current parameters of Alice and Bob
+                """
+                for minibatch in range(num_minibatches):
 
-                p, k = generate_data(gpu_available=gpu_available, batch_size=batch_size, n=n)
+                    _, k = generate_data(gpu_available=gpu_available, batch_size=batch_size, n=n)
 
-                # forward pass through alice and eve networks
-                alice_c = alice.forward(torch.cat((p, k), 1).float())
-                eve_p = eve.forward(alice_c)
+                    # forward pass through alice and eve networks
+                    alice_c = alice.forward(torch.cat((data.flatten(), k), 1).float())
+                    eve_p = eve.forward(alice_c)
 
-                if network == "alice_bob":
+                    if network == "alice_bob":
 
-                    # forward pass through bob network
-                    bob_p = bob.forward(torch.cat((alice_c, k), 1).float())
+                        # forward pass through bob network
+                        bob_p = bob.forward(torch.cat((alice_c, k), 1).float())
 
-                    # calculate errors
-                    error_bob = bob_reconstruction_error(input=bob_p, target=p)
-                    error_eve = eve_reconstruction_error(input=eve_p, target=p)
-                    alice_bob_loss =  error_bob + (1.0 - error_eve**2)
+                        # calculate errors
+                        error_bob = bob_reconstruction_error(input=bob_p, target=data.flatten())
+                        error_eve = eve_reconstruction_error(input=eve_p, target=data.flatten())
+                        alice_bob_loss =  error_bob + (1.0 - error_eve**2)
 
-                    # Zero gradients, perform a backward pass, clip gradients, and update the weights.
-                    optimizer_alice.zero_grad()
-                    optimizer_bob.zero_grad()
-                    alice_bob_loss.backward()
-                    nn.utils.clip_grad_value_(alice.parameters(), clip_value)
-                    nn.utils.clip_grad_value_(bob.parameters(), clip_value)
-                    optimizer_alice.step()
-                    optimizer_bob.step()
+                        # Zero gradients, perform a backward pass, clip gradients, and update the weights.
+                        optimizer_alice.zero_grad()
+                        optimizer_bob.zero_grad()
+                        alice_bob_loss.backward()
+                        nn.utils.clip_grad_value_(alice.parameters(), clip_value)
+                        nn.utils.clip_grad_value_(bob.parameters(), clip_value)
+                        optimizer_alice.step()
+                        optimizer_bob.step()
 
-                elif network == "eve":
+                    elif network == "eve":
 
-                    # calculate error
-                    error_eve = eve_reconstruction_error(input=eve_p, target=p)
+                        # calculate error
+                        error_eve = eve_reconstruction_error(input=eve_p, target=data.flatten())
 
-                    # Zero gradients, perform a backward pass, and update the weights
-                    optimizer_eve.zero_grad()
-                    error_eve.backward()
-                    nn.utils.clip_grad_value_(eve.parameters(), clip_value)
-                    optimizer_eve.step()
+                        # Zero gradients, perform a backward pass, and update the weights
+                        optimizer_eve.zero_grad()
+                        error_eve.backward()
+                        nn.utils.clip_grad_value_(eve.parameters(), clip_value)
+                        optimizer_eve.step()
 
         # end time time for step
         time_elapsed = time.time() - tic
 
-        if step % aggregated_losses_every_n_steps == 0:
+        if epoch % aggregated_losses_every_n_steps == 0:
             # aggregate min training errors for bob and eve networks
             aggregated_losses["alice_bob_training_loss"].append(alice_bob_loss.cpu().detach().numpy().tolist())
             aggregated_losses["bob_reconstruction_training_errors"].append(error_bob.cpu().detach().numpy().tolist())
             aggregated_losses["eve_reconstruction_training_errors"].append(error_eve.cpu().detach().numpy().tolist())
-            aggregated_losses["step"].append(step)
+            aggregated_losses["step"].append(epoch)
 
-        if step % show_every_n_steps == 0:
-            print("Total_Steps: %i of %i || Time_Elapsed_Per_Step: (%.3f sec/step) || Bob_Alice_Loss: %.5f || Bob_Reconstruction_Error: %.5f || Eve_Reconstruction_Error: %.5f" % (step,
+        if epoch % show_every_n_steps == 0:
+            print("Total_Steps: %i of %i || Time_Elapsed_Per_Step: (%.3f sec/step) || Bob_Alice_Loss: %.5f || Bob_Reconstruction_Error: %.5f || Eve_Reconstruction_Error: %.5f" % (epoch,
                                                                                                                                                                                 training_steps,
                                                                                                                                                                                 time_elapsed,
                                                                                                                                                                                 aggregated_losses["alice_bob_training_loss"][-1],
                                                                                                                                                                                 aggregated_losses["bob_reconstruction_training_errors"][-1],
                                                                                                                                                                                 aggregated_losses["eve_reconstruction_training_errors"][-1]))
 
-        if step % checkpoint_every_n_steps == 0 and step != 0:
+        if epoch % checkpoint_every_n_steps == 0 and epoch != 0:
             print("checkpointing models...\n")
             torch.save(alice.state_dict(), os.path.join(prjPaths.CHECKPOINT_DIR, "alice.pth"))
             torch.save(bob.state_dict(), os.path.join(prjPaths.CHECKPOINT_DIR, "bob.pth"))
@@ -193,12 +197,13 @@ def inference(gpu_available, prjPaths):
     NUM_BITS_PER_BYTE = 8
 
     # restore variable to describe message length used to determine network dimensions
-    n = restore_persist_object(full_path=os.path.join(prjPaths.PERSIST_DIR, "n.p"))
-
+    #n = restore_persist_object(full_path=os.path.join(prjPaths.PERSIST_DIR, "n.p"))
+    img_dim = 28
+    key_dim = 256
     # define networks
-    alice = MixTransformNN(D_in=(n*2), H=(n*2))
-    bob = MixTransformNN(D_in=(n*2), H=(n*2))
-    eve = MixTransformNN(D_in=n, H=(n*2))
+    alice = MixTransformNN(D_in=(img_dim**2 + key_dim), H=(img_dim**2 + key_dim))
+    bob = MixTransformNN(D_in=(img_dim**2 + key_dim), H=(img_dim**2 + key_dim))
+    eve = MixTransformNN(D_in=img_dim**2, H=img_dim**2)
 
 
     # restoring persisted networks
@@ -225,7 +230,7 @@ def inference(gpu_available, prjPaths):
         p_utf_8 = input("enter plaintext: ")
 
         # ensure that p is correct length else pad with spaces
-        while not ((len(p_utf_8) * NUM_BITS_PER_BYTE) % n == 0):
+        while not ((len(p_utf_8) * NUM_BITS_PER_BYTE) % img_dim == 0):
             p_utf_8 = p_utf_8 + " "
 
         # convert p UTF-8 -> Binary
@@ -234,14 +239,14 @@ def inference(gpu_available, prjPaths):
         print("plaintext ({}) in binary: {}".format(p_utf_8, p_bs))
 
         # group Binary p into groups that are valid with input layer of network
-        p_bs = [np.asarray(list(p_bs[i-1]+p_bs[i]), dtype=np.float32) for i, p_b in enumerate(p_bs) if ((i-1) * NUM_BITS_PER_BYTE) % n == 0]
+        p_bs = [np.asarray(list(p_bs[i-1]+p_bs[i]), dtype=np.float32) for i, p_b in enumerate(p_bs) if ((i-1) * NUM_BITS_PER_BYTE) % img_dim == 0]
 
         eve_ps_b = []
         bob_ps_b = []
         for p_b in p_bs:
 
             # generate k
-            _, k = generate_data(gpu_available=gpu_available, batch_size=1, n=n)
+            _, k = generate_data(gpu_available=gpu_available, batch_size=1, n=img_dim)
             p_b = torch.unsqueeze(torch.from_numpy(p_b)*2-1, 0)
 
             if gpu_available:
@@ -276,8 +281,31 @@ def main():
     else:
         gpu_available = False
 
+    train_kwargs = {'batch_size': args.batch_size}
+    test_kwargs = {'batch_size': args.test_batch_size}
+    if torch.cuda.device_count() > 0:
+        cuda_kwargs = {'num_workers': 1,
+                       'pin_memory': True,
+                       'shuffle': True}
+        train_kwargs.update(cuda_kwargs)
+        test_kwargs.update(cuda_kwargs)
+
+    transform=transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize((0.1307,), (0.3081,))
+        ])
+    dataset1 = datasets.MNIST('../data', train=True, download=True,
+                       transform=transform)
+    dataset2 = datasets.MNIST('../data', train=False,
+                       transform=transform)
+    train_loader = torch.utils.data.DataLoader(dataset1,**train_kwargs)
+    test_loader = torch.utils.data.DataLoader(dataset2, **test_kwargs)
+
     if args.run_type == "train":
-        train(gpu_available=gpu_available,
+        train(
+            train_loader=train_loader,
+            test_loader=test_loader,
+            gpu_available=gpu_available,
             prjPaths=prjPaths_,
             n=args.n,
             training_steps=args.training_steps,
