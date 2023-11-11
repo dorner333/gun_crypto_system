@@ -282,7 +282,7 @@ def main():
         gpu_available = False
 
     train_kwargs = {'batch_size': args.batch_size}
-    test_kwargs = {'batch_size': args.test_batch_size}
+    test_kwargs = {'batch_size': args.batch_size}
     if torch.cuda.device_count() > 0:
         cuda_kwargs = {'num_workers': 1,
                        'pin_memory': True,
