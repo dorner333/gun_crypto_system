@@ -116,7 +116,7 @@ def train(
         tic = time.time()
         for batch_idx, (data, target) in enumerate(train_loader):
             # start time for step
-
+            data = data.to('cuda')
             # Training alternates between Alice/Bob and Eve
             for network, num_minibatches in {"alice_bob": 1, "eve": 2}.items():
 
