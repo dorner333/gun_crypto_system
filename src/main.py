@@ -130,7 +130,7 @@ def train(
                     _, k = generate_data(gpu_available=gpu_available, batch_size=batch_size, n=n)
 
                     # forward pass through alice and eve networks
-                    alice_c = alice.forward(torch.cat((data.flatten(), k), 1).float())
+                    alice_c = alice.forward(torch.cat((data.flatten(start_dim=1), k), 1).float())
                     eve_p = eve.forward(alice_c)
 
                     if network == "alice_bob":
@@ -139,8 +139,8 @@ def train(
                         bob_p = bob.forward(torch.cat((alice_c, k), 1).float())
 
                         # calculate errors
-                        error_bob = bob_reconstruction_error(input=bob_p, target=data.flatten())
-                        error_eve = eve_reconstruction_error(input=eve_p, target=data.flatten())
+                        error_bob = bob_reconstruction_error(input=bob_p, target=data.flatten(start_dim=1))
+                        error_eve = eve_reconstruction_error(input=eve_p, target=data.flatten(start_dim=1))
                         alice_bob_loss =  error_bob + (1.0 - error_eve**2)
 
                         # Zero gradients, perform a backward pass, clip gradients, and update the weights.
@@ -155,7 +155,7 @@ def train(
                     elif network == "eve":
 
                         # calculate error
-                        error_eve = eve_reconstruction_error(input=eve_p, target=data.flatten())
+                        error_eve = eve_reconstruction_error(input=eve_p, target=data.flatten(start_dim=1))
 
                         # Zero gradients, perform a backward pass, and update the weights
                         optimizer_eve.zero_grad()
