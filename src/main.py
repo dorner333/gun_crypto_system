@@ -7,6 +7,7 @@ import torch.nn as nn
 from torch.optim import Adam
 from torch.autograd import Variable
 from torchvision import datasets, transforms
+from tqdm import tqdm
 
 import argparse
 import os
@@ -30,7 +31,7 @@ def get_args():
                         help="length of plaintext (message length)")
     parser.add_argument("--training_steps",
                         type=int,
-                        default=25000,
+                        default=2500,
                         help="number of training steps")
     parser.add_argument("--batch_size",
                         type=int,
@@ -75,7 +76,7 @@ def train(
         checkpoint_every_n_steps,
         verbose,
         clip_value,
-        aggregated_losses_every_n_steps=100):
+        aggregated_losses_every_n_steps=32):
 
     # define networks
     alice = MixTransformNN(D_in=(n*2), H=(n*2))
@@ -112,7 +113,7 @@ def train(
     bob_reconstruction_error = nn.L1Loss()
     eve_reconstruction_error = nn.L1Loss()
 
-    for epoch in range(training_steps):
+    for epoch in tqdm(range(training_steps)):
         tic = time.time()
         for batch_idx, (data, target) in enumerate(train_loader):
             # start time for step
@@ -130,6 +131,7 @@ def train(
                     _, k = generate_data(gpu_available=gpu_available, batch_size=batch_size, n=n)
 
                     # forward pass through alice and eve networks
+                    # print((data.flatten(start_dim=1).shape, k.shape), '\n\n')
                     alice_c = alice.forward(torch.cat((data.flatten(start_dim=1), k), 1).float())
                     eve_p = eve.forward(alice_c)
 
@@ -294,12 +296,12 @@ def main():
         transforms.ToTensor(),
         transforms.Normalize((0.1307,), (0.3081,))
         ])
-    dataset1 = datasets.MNIST('../data', train=True, download=True,
+    dataset1 = datasets.MNIST('/homes/flomakin/gun_crypto_system/data', train=True, download=True,
                        transform=transform)
-    dataset2 = datasets.MNIST('../data', train=False,
+    dataset2 = datasets.MNIST('/homes/flomakin/gun_crypto_system/data', train=False,
                        transform=transform)
-    train_loader = torch.utils.data.DataLoader(dataset1,**train_kwargs)
-    test_loader = torch.utils.data.DataLoader(dataset2, **test_kwargs)
+    train_loader = torch.utils.data.DataLoader(dataset1,drop_last = True, **train_kwargs)
+    test_loader = torch.utils.data.DataLoader(dataset2, drop_last = True, **test_kwargs)
 
     if args.run_type == "train":
         train(
