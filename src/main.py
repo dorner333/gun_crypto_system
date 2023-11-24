@@ -1,13 +1,10 @@
-"""
-@author: Michael Guarino
-"""
-
 import torch
 import torch.nn as nn
 from torch.optim import Adam
 from torch.autograd import Variable
 from torchvision import datasets, transforms
 from tqdm import tqdm
+from pathlib import Path
 
 import argparse
 import os
@@ -20,39 +17,57 @@ from utils import generate_data, prjPaths, UTF_8_to_binary, binary_to_UTF_8, per
 
 def get_args():
     parser = argparse.ArgumentParser(description="PyTorch Implementation of cryptogan")
+
+    parser.add_argument('exp_name',
+                        type=str,
+                        help='Name of the experiment')
+    
+    parser.add_argument('-o',
+                        '--overwrite',
+                        action='store_true',
+                        help='overwright experiment folder if exp with exp_name exists')
+
     parser.add_argument("--run_type",
                         type=str,
                         default="train",
                         choices=["train", "inference"],
                         help="train model or load trained model for interence")
+    
     parser.add_argument("--n",
                         type=int,
                         default=784,
                         help="length of plaintext (message length)")
+    
     parser.add_argument("--training_steps",
                         type=int,
                         default=2500,
                         help="number of training steps")
+    
     parser.add_argument("--batch_size",
                         type=int,
                         default=256,
                         help="number training examples per (mini)batch")
+    
     parser.add_argument("--learning_rate",
                         type=float,
                         default=0.0008,
                         help="learning rate")
+    
     parser.add_argument("--show_every_n_steps",
                         type=int,
                         default=100,
                         help="during training print output to cli every n steps")
+    
     parser.add_argument("--checkpoint_every_n_steps",
                         type=int,
                         default=5000,
                         help="checkpoint model files during training every n epochs")
+    
     parser.add_argument("--verbose",
                         type=bool,
                         default=False,
                         help="during training print model outputs to cli")
+    
     parser.add_argument("--clip_value",
                         type=float,
                         default=1,
@@ -60,7 +75,6 @@ def get_args():
 
     args = parser.parse_args()
     return args
-# end
 
 
 def train(
@@ -275,7 +289,7 @@ def inference(gpu_available, prjPaths):
 
 def main():
     args = get_args()
-    prjPaths_ = prjPaths()
+    prjPaths_ = prjPaths(exp_name = args.exp_name, overwrite = args.overwrite)
 
     # determine if gpu present
     if torch.cuda.device_count() > 0:
@@ -287,8 +301,8 @@ def main():
     test_kwargs = {'batch_size': args.batch_size}
     if torch.cuda.device_count() > 0:
         cuda_kwargs = {'num_workers': 1,
-                       'pin_memory': True,
-                       'shuffle': True}
+                    'pin_memory': True,
+                    'shuffle': True}
         train_kwargs.update(cuda_kwargs)
         test_kwargs.update(cuda_kwargs)
 
@@ -297,9 +311,9 @@ def main():
         transforms.Normalize((0.1307,), (0.3081,))
         ])
     dataset1 = datasets.MNIST('/homes/flomakin/gun_crypto_system/data', train=True, download=True,
-                       transform=transform)
+                    transform=transform)
     dataset2 = datasets.MNIST('/homes/flomakin/gun_crypto_system/data', train=False,
-                       transform=transform)
+                    transform=transform)
     train_loader = torch.utils.data.DataLoader(dataset1,drop_last = True, **train_kwargs)
     test_loader = torch.utils.data.DataLoader(dataset2, drop_last = True, **test_kwargs)
 

@@ -1,31 +1,36 @@
-"""
-@author: Michael Guarino
-"""
-
 import torch
 import os
 import codecs
 import datetime
 import logging
 import pickle
+from pathlib import Path
+
 
 class prjPaths:
-    def __init__(self, getDataset=True):
-        self.SRC_DIR = os.path.abspath(os.path.curdir)
-        self.ROOT_MOD_DIR = "/".join(self.SRC_DIR.split("/")[:-1])
-        self.LIB_DIR = os.path.join(self.ROOT_MOD_DIR, "lib")
-        self.CHECKPOINT_DIR = os.path.join(self.LIB_DIR, "chkpts")
-        self.PERSIST_DIR = os.path.join(self.LIB_DIR, "persist")
-        self.LOGS_DIR = os.path.join(self.LIB_DIR, "logs")
+    def __init__(self, exp_name, overwrite = False,  getDataset=True):
+        self.SRC_DIR = Path.cwd()
+        self.ROOT_MOD_DIR = self.SRC_DIR.parent
+        
+        self.LIB_DIR = self.ROOT_MOD_DIR / 'lib'
+        self.EXP_DIR = self.LIB_DIR / exp_name
+
+        self.CHECKPOINT_DIR = self.EXP_DIR / 'chkpts'
+        self.PERSIST_DIR = self.EXP_DIR / 'persist'
+        self.LOGS_DIR = self.EXP_DIR / 'logs'
 
         pth_exists_else_mk = lambda path: os.mkdir(path) if not os.path.exists(path) else None
 
+        if not overwrite and os.path.exists(self.EXP_DIR):
+            print(f'{self.EXP_DIR} exists but flag overwrite == False')
+            raise OSError('File exists')
+
         pth_exists_else_mk(self.LIB_DIR)
+        pth_exists_else_mk(self.EXP_DIR)
         pth_exists_else_mk(self.CHECKPOINT_DIR)
         pth_exists_else_mk(self.PERSIST_DIR)
         pth_exists_else_mk(self.LOGS_DIR)
-    # end
-# end
+
 
 def generate_data(gpu_available, batch_size, n):
     if gpu_available:
