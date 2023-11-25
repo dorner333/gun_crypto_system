@@ -3,17 +3,15 @@ import torch.nn as nn
 from torch.optim import Adam
 from torch.autograd import Variable
 from torchvision import datasets, transforms
+import torch.nn.functional as F
 from tqdm import tqdm
-from pathlib import Path
 
 import argparse
 import os
-import numpy as np
 import time
-import itertools
 
-from models import MixTransformNN
-from utils import generate_data, prjPaths, UTF_8_to_binary, binary_to_UTF_8, persist_object, restore_persist_object
+from models import Encoder, DecoderBOB, DecoderEVA
+from utils import generate_key, generate_key_batch, prjPaths
 
 def get_args():
     parser = argparse.ArgumentParser(description="PyTorch Implementation of cryptogan")
@@ -40,27 +38,27 @@ def get_args():
     
     parser.add_argument("--training_steps",
                         type=int,
-                        default=2500,
+                        default=25000,
                         help="number of training steps")
     
     parser.add_argument("--batch_size",
                         type=int,
-                        default=256,
+                        default=60000,
                         help="number training examples per (mini)batch")
     
     parser.add_argument("--learning_rate",
                         type=float,
-                        default=0.0008,
+                        default=0.001,
                         help="learning rate")
     
     parser.add_argument("--show_every_n_steps",
                         type=int,
-                        default=100,
+                        default=1,
                         help="during training print output to cli every n steps")
     
     parser.add_argument("--checkpoint_every_n_steps",
                         type=int,
-                        default=5000,
+                        default=1,
                         help="checkpoint model files during training every n epochs")
     
     parser.add_argument("--verbose",
@@ -92,12 +90,10 @@ def train(
         clip_value,
         aggregated_losses_every_n_steps=32):
 
-    # define networks
-    alice = MixTransformNN(D_in=(n*2), H=(n*2))
-    bob = MixTransformNN(D_in=(n*2), H=(n*2))
-    eve = MixTransformNN(D_in=n, H=(n*2))
+    alice = Encoder()
+    bob = DecoderBOB()
+    eve = DecoderEVA()
 
-    # specify that model is currently in training mode
     alice.train()
     bob.train()
     eve.train()
@@ -107,10 +103,6 @@ def train(
         bob.cuda()
         eve.cuda()
 
-    # pickle n (message length)
-    persist_object(full_path=os.path.join(prjPaths.PERSIST_DIR, "n.p"), x=n)
-
-    # aggregate training errors
     aggregated_losses = {
             "alice_bob_training_loss": [],
             "bob_reconstruction_training_errors": [],
@@ -118,7 +110,6 @@ def train(
             "step": []
     }
 
-    # define optimizers
     optimizer_alice = Adam(params=alice.parameters(), lr=learning_rate)
     optimizer_bob = Adam(params=bob.parameters(), lr=learning_rate)
     optimizer_eve = Adam(params=eve.parameters(), lr=learning_rate)
@@ -129,35 +120,35 @@ def train(
 
     for epoch in tqdm(range(training_steps)):
         tic = time.time()
-        for batch_idx, (data, target) in enumerate(train_loader):
-            # start time for step
+        for batch_idx, (data, target) in tqdm(enumerate(train_loader)):
             data = data.to('cuda')
             # Training alternates between Alice/Bob and Eve
             for network, num_minibatches in {"alice_bob": 1, "eve": 2}.items():
-
                 """ 
                 Alice/Bob training for one minibatch, and then Eve training for two minibatches this ratio 
                 in order to give a slight computational edge to the adversary Eve without training it so much
                 that it becomes excessively specific to the exact current parameters of Alice and Bob
                 """
-                for minibatch in range(num_minibatches):
+                for _ in range(num_minibatches):
 
-                    _, k = generate_data(gpu_available=gpu_available, batch_size=batch_size, n=n)
+                    k = generate_key_batch(size=128, batchsize=data.shape[0], gpu_available=gpu_available)
 
                     # forward pass through alice and eve networks
-                    # print((data.flatten(start_dim=1).shape, k.shape), '\n\n')
-                    alice_c = alice.forward(torch.cat((data.flatten(start_dim=1), k), 1).float())
-                    eve_p = eve.forward(alice_c)
+                    
+                    ciphertext = alice.forward(data, k)
+
+                    eve_p = eve.forward(ciphertext)
 
                     if network == "alice_bob":
 
                         # forward pass through bob network
-                        bob_p = bob.forward(torch.cat((alice_c, k), 1).float())
+                        bob_p = bob.forward(ciphertext, k)
 
                         # calculate errors
-                        error_bob = bob_reconstruction_error(input=bob_p, target=data.flatten(start_dim=1))
-                        error_eve = eve_reconstruction_error(input=eve_p, target=data.flatten(start_dim=1))
-                        alice_bob_loss =  error_bob + (1.0 - error_eve**2)
+                        error_bob = bob_reconstruction_error(input=bob_p, target=data)
+                        error_eve = eve_reconstruction_error(input=eve_p, target=data)
+                        # alice_bob_loss =  error_bob + F.relu(1 - error_eve)
+                        alice_bob_loss = error_bob - error_eve
 
                         # Zero gradients, perform a backward pass, clip gradients, and update the weights.
                         optimizer_alice.zero_grad()
@@ -171,7 +162,7 @@ def train(
                     elif network == "eve":
 
                         # calculate error
-                        error_eve = eve_reconstruction_error(input=eve_p, target=data.flatten(start_dim=1))
+                        error_eve = eve_reconstruction_error(input=eve_p, target=data)
 
                         # Zero gradients, perform a backward pass, and update the weights
                         optimizer_eve.zero_grad()
@@ -203,119 +194,98 @@ def train(
             torch.save(bob.state_dict(), os.path.join(prjPaths.CHECKPOINT_DIR, "bob.pth"))
             torch.save(eve.state_dict(), os.path.join(prjPaths.CHECKPOINT_DIR, "eve.pth"))
 
-    # pickle aggregated list of errors
-    persist_object(full_path=os.path.join(prjPaths.PERSIST_DIR, "aggregated_losses.p"), x=aggregated_losses)
-# end
 
-def inference(gpu_available, prjPaths):
-    
-    # declare function member constant
-    NUM_BITS_PER_BYTE = 8
-
-    # restore variable to describe message length used to determine network dimensions
-    #n = restore_persist_object(full_path=os.path.join(prjPaths.PERSIST_DIR, "n.p"))
-    img_dim = 28
-    key_dim = 256
-    # define networks
-    alice = MixTransformNN(D_in=(img_dim**2 + key_dim), H=(img_dim**2 + key_dim))
-    bob = MixTransformNN(D_in=(img_dim**2 + key_dim), H=(img_dim**2 + key_dim))
-    eve = MixTransformNN(D_in=img_dim**2, H=img_dim**2)
+# def inference(gpu_available, prjPaths):
+#     alice = Encoder()
+#     bob = DecoderBOB()
+#     eve = DecoderEVA()
 
 
-    # restoring persisted networks
-    print("restoring Alice, Bob, and Eve networks...\n")
-    alice.load_state_dict(torch.load(os.path.join(prjPaths.CHECKPOINT_DIR, "alice.pth")))
-    bob.load_state_dict(torch.load(os.path.join(prjPaths.CHECKPOINT_DIR, "bob.pth")))
-    eve.load_state_dict(torch.load(os.path.join(prjPaths.CHECKPOINT_DIR, "eve.pth")))
+#     # restoring persisted networks
+#     print("restoring Alice, Bob, and Eve networks...\n")
+#     alice.load_state_dict(torch.load(os.path.join(prjPaths.CHECKPOINT_DIR, "alice.pth")))
+#     bob.load_state_dict(torch.load(os.path.join(prjPaths.CHECKPOINT_DIR, "bob.pth")))
+#     eve.load_state_dict(torch.load(os.path.join(prjPaths.CHECKPOINT_DIR, "eve.pth")))
 
-    # specify that model is currently in training mode
-    alice.eval()
-    bob.eval()
-    eve.eval()
+#     # specify that model is currently in training mode
+#     alice.eval()
+#     bob.eval()
+#     eve.eval()
 
-    # if gpu available then run inference on gpu
-    if gpu_available:
-        alice.cuda()
-        bob.cuda()
-        eve.cuda()
+#     # if gpu available then run inference on gpu
+#     if gpu_available:
+#         alice.cuda()
+#         bob.cuda()
+#         eve.cuda()
 
-    convert_tensor_to_list_and_scale = lambda tensor: list(map(lambda x: int((round(x)+1)/2), tensor.cpu().detach().numpy().tolist()))
+#     convert_tensor_to_list_and_scale = lambda tensor: list(map(lambda x: int((round(x)+1)/2), tensor.cpu().detach().numpy().tolist()))
 
-    while True:
+#     while True:
 
-        p_utf_8 = input("enter plaintext: ")
+#         p_utf_8 = input("enter plaintext: ")
 
-        # ensure that p is correct length else pad with spaces
-        while not ((len(p_utf_8) * NUM_BITS_PER_BYTE) % img_dim == 0):
-            p_utf_8 = p_utf_8 + " "
+#         # ensure that p is correct length else pad with spaces
+#         while not ((len(p_utf_8) * NUM_BITS_PER_BYTE) % img_dim == 0):
+#             p_utf_8 = p_utf_8 + " "
 
-        # convert p UTF-8 -> Binary
-        p_bs = UTF_8_to_binary(p_utf_8)
+#         # convert p UTF-8 -> Binary
+#         p_bs = UTF_8_to_binary(p_utf_8)
 
-        print("plaintext ({}) in binary: {}".format(p_utf_8, p_bs))
+#         print("plaintext ({}) in binary: {}".format(p_utf_8, p_bs))
 
-        # group Binary p into groups that are valid with input layer of network
-        p_bs = [np.asarray(list(p_bs[i-1]+p_bs[i]), dtype=np.float32) for i, p_b in enumerate(p_bs) if ((i-1) * NUM_BITS_PER_BYTE) % img_dim == 0]
+#         # group Binary p into groups that are valid with input layer of network
+#         p_bs = [np.asarray(list(p_bs[i-1]+p_bs[i]), dtype=np.float32) for i, p_b in enumerate(p_bs) if ((i-1) * NUM_BITS_PER_BYTE) % img_dim == 0]
 
-        eve_ps_b = []
-        bob_ps_b = []
-        for p_b in p_bs:
+#         eve_ps_b = []
+#         bob_ps_b = []
+#         for p_b in p_bs:
 
-            # generate k
-            _, k = generate_data(gpu_available=gpu_available, batch_size=1, n=img_dim)
-            p_b = torch.unsqueeze(torch.from_numpy(p_b)*2-1, 0)
+#             # generate k
+#             _, k = generate_data(gpu_available=gpu_available, batch_size=1, n=img_dim)
+#             p_b = torch.unsqueeze(torch.from_numpy(p_b)*2-1, 0)
 
-            if gpu_available:
-                p_b = p_b.cuda()
+#             if gpu_available:
+#                 p_b = p_b.cuda()
 
-            # run forward pass through networks
-            alice_c = torch.unsqueeze(alice.forward(torch.cat((p_b, k), 1).float()), 0)
-            eve_p = convert_tensor_to_list_and_scale(eve.forward(alice_c))
-            bob_p = convert_tensor_to_list_and_scale(bob.forward(torch.cat((alice_c, k), 1).float()))
+#             # run forward pass through networks
+#             alice_c = torch.unsqueeze(alice.forward(torch.cat((p_b, k), 1).float()), 0)
+#             eve_p = convert_tensor_to_list_and_scale(eve.forward(alice_c))
+#             bob_p = convert_tensor_to_list_and_scale(bob.forward(torch.cat((alice_c, k), 1).float()))
 
-            eve_ps_b.append("".join(list(map(str, eve_p))))
-            bob_ps_b.append("".join(list(map(str, bob_p))))
+#             eve_ps_b.append("".join(list(map(str, eve_p))))
+#             bob_ps_b.append("".join(list(map(str, bob_p))))
         
-        print("eve_ps_b:                     {}".format(list(itertools.chain.from_iterable([[i[:8], i[8:]]  for i in eve_ps_b]))))
-        print("bob_ps_b:                     {}\n".format(list(itertools.chain.from_iterable([[i[:8], i[8:]]  for i in bob_ps_b]))))
+#         print("eve_ps_b:                     {}".format(list(itertools.chain.from_iterable([[i[:8], i[8:]]  for i in eve_ps_b]))))
+#         print("bob_ps_b:                     {}\n".format(list(itertools.chain.from_iterable([[i[:8], i[8:]]  for i in bob_ps_b]))))
 
-        # TODO if model isn't well trained then it will predict binary values that are not valid in UTF-8 find another way to demo
-        #eve_p_utf_8 = binary_to_UTF_8(eve_ps_b)
-        #bob_p_utf_8 = binary_to_UTF_8(bob_ps_b)
-
-        #print("eve_p_utf_8: {}".format(eve_p_utf_8))
-        #print("bob_p_utf_8: {}\n".format(bob_p_utf_8))
-# end
 
 def main():
     args = get_args()
     prjPaths_ = prjPaths(exp_name = args.exp_name, overwrite = args.overwrite)
 
-    # determine if gpu present
     if torch.cuda.device_count() > 0:
         gpu_available = True
     else:
         gpu_available = False
 
+    transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize((0.5,), (0.5,))
+    ])
+
+    dataset1 = datasets.MNIST('/homes/flomakin/gun_crypto_system/data',
+                    train=True, download=True,
+                    transform=transform)
+
+    dataset2 = datasets.MNIST('/homes/flomakin/gun_crypto_system/data',
+                    train=False, download=True,
+                    transform=transform)
+    
     train_kwargs = {'batch_size': args.batch_size}
     test_kwargs = {'batch_size': args.batch_size}
-    if torch.cuda.device_count() > 0:
-        cuda_kwargs = {'num_workers': 1,
-                    'pin_memory': True,
-                    'shuffle': True}
-        train_kwargs.update(cuda_kwargs)
-        test_kwargs.update(cuda_kwargs)
 
-    transform=transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize((0.1307,), (0.3081,))
-        ])
-    dataset1 = datasets.MNIST('/homes/flomakin/gun_crypto_system/data', train=True, download=True,
-                    transform=transform)
-    dataset2 = datasets.MNIST('/homes/flomakin/gun_crypto_system/data', train=False,
-                    transform=transform)
-    train_loader = torch.utils.data.DataLoader(dataset1,drop_last = True, **train_kwargs)
-    test_loader = torch.utils.data.DataLoader(dataset2, drop_last = True, **test_kwargs)
+    train_loader = torch.utils.data.DataLoader(dataset1, drop_last=True, **train_kwargs)
+    test_loader = torch.utils.data.DataLoader(dataset2, drop_last=True, **test_kwargs)
 
     if args.run_type == "train":
         train(
@@ -331,9 +301,8 @@ def main():
             checkpoint_every_n_steps=args.checkpoint_every_n_steps,
             verbose=args.verbose,
             clip_value=args.clip_value)
-    elif args.run_type == "inference":
-        inference(gpu_available, prjPaths=prjPaths_)
-# end
+    # elif args.run_type == "inference":
+    #     inference(gpu_available, prjPaths=prjPaths_)
 
 if __name__ == "__main__":
     main()
