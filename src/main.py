@@ -3,8 +3,10 @@ import torch.nn as nn
 from torch.optim import Adam
 from torch.autograd import Variable
 from torchvision import datasets, transforms
+from torchvision.utils import make_grid
 import torch.nn.functional as F
 from tqdm import tqdm
+import wandb
 
 import argparse
 import os
@@ -16,7 +18,7 @@ from utils import generate_key, generate_key_batch, prjPaths
 def get_args():
     parser = argparse.ArgumentParser(description="PyTorch Implementation of cryptogan")
 
-    parser.add_argument('exp_name',
+    parser.add_argument('--exp_name',
                         type=str,
                         help='Name of the experiment')
     
@@ -43,7 +45,7 @@ def get_args():
     
     parser.add_argument("--batch_size",
                         type=int,
-                        default=60000,
+                        default=10000,
                         help="number training examples per (mini)batch")
     
     parser.add_argument("--learning_rate",
@@ -53,12 +55,12 @@ def get_args():
     
     parser.add_argument("--show_every_n_steps",
                         type=int,
-                        default=1,
+                        default=10,
                         help="during training print output to cli every n steps")
     
     parser.add_argument("--checkpoint_every_n_steps",
                         type=int,
-                        default=1,
+                        default=1000,
                         help="checkpoint model files during training every n epochs")
     
     parser.add_argument("--verbose",
@@ -77,18 +79,14 @@ def get_args():
 
 def train(
         train_loader,
-        test_loader,
         gpu_available,
         prjPaths,
-        n,
         training_steps,
-        batch_size,
         learning_rate,
         show_every_n_steps,
         checkpoint_every_n_steps,
-        verbose,
         clip_value,
-        aggregated_losses_every_n_steps=32):
+        aggregated_losses_every_n_steps=32,):
 
     alice = Encoder()
     bob = DecoderBOB()
@@ -131,7 +129,7 @@ def train(
                 """
                 for _ in range(num_minibatches):
 
-                    k = generate_key_batch(size=128, batchsize=data.shape[0], gpu_available=gpu_available)
+                    k = generate_key_batch(size=784, batchsize=data.shape[0], gpu_available=gpu_available)
 
                     # forward pass through alice and eve networks
                     
@@ -149,6 +147,8 @@ def train(
                         error_eve = eve_reconstruction_error(input=eve_p, target=data)
                         # alice_bob_loss =  error_bob + F.relu(1 - error_eve)
                         alice_bob_loss = error_bob - error_eve
+
+                            
 
                         # Zero gradients, perform a backward pass, clip gradients, and update the weights.
                         optimizer_alice.zero_grad()
@@ -179,7 +179,7 @@ def train(
             aggregated_losses["bob_reconstruction_training_errors"].append(error_bob.cpu().detach().numpy().tolist())
             aggregated_losses["eve_reconstruction_training_errors"].append(error_eve.cpu().detach().numpy().tolist())
             aggregated_losses["step"].append(epoch)
-
+        
         if epoch % show_every_n_steps == 0:
             print("Total_Steps: %i of %i || Time_Elapsed_Per_Step: (%.3f sec/step) || Bob_Alice_Loss: %.5f || Bob_Reconstruction_Error: %.5f || Eve_Reconstruction_Error: %.5f" % (epoch,
                                                                                                                                                                                 training_steps,
@@ -187,12 +187,25 @@ def train(
                                                                                                                                                                                 aggregated_losses["alice_bob_training_loss"][-1],
                                                                                                                                                                                 aggregated_losses["bob_reconstruction_training_errors"][-1],
                                                                                                                                                                                 aggregated_losses["eve_reconstruction_training_errors"][-1]))
+            wandb.log({
+                "Epoch": epoch,
+                "Time_Elapsed_Per_Step": time_elapsed, 
+                "Bob_Alice_Loss": aggregated_losses["alice_bob_training_loss"][-1],
+                "Bob_Reconstruction_Error": aggregated_losses["bob_reconstruction_training_errors"][-1],
+                "Eve_Reconstruction_Error": aggregated_losses["eve_reconstruction_training_errors"][-1]
+            })
+            image_array = make_grid(nrow=3, ncols=3, pad_value=2, tensor=[*data[:3], *bob_p[:3], *eve_p[:3]])
+            images = wandb.Image(
+                image_array, 
+                caption="Top: Ground truth, Middle: Bob reconstruction, Bottom: Eve reconstruction"
+                )
+            wandb.log({"examples": images})
 
         if epoch % checkpoint_every_n_steps == 0 and epoch != 0:
             print("checkpointing models...\n")
-            torch.save(alice.state_dict(), os.path.join(prjPaths.CHECKPOINT_DIR, "alice.pth"))
-            torch.save(bob.state_dict(), os.path.join(prjPaths.CHECKPOINT_DIR, "bob.pth"))
-            torch.save(eve.state_dict(), os.path.join(prjPaths.CHECKPOINT_DIR, "eve.pth"))
+            torch.save(alice.state_dict(), os.path.join(prjPaths.CHECKPOINT_DIR, f"alice_epoch_{epoch}.pth"))
+            torch.save(bob.state_dict(), os.path.join(prjPaths.CHECKPOINT_DIR, f"bob_epoch_{epoch}.pth"))
+            torch.save(eve.state_dict(), os.path.join(prjPaths.CHECKPOINT_DIR, f"eve_epoch_{epoch}.pth"))
 
 
 # def inference(gpu_available, prjPaths):
@@ -262,6 +275,17 @@ def train(
 def main():
     args = get_args()
     prjPaths_ = prjPaths(exp_name = args.exp_name, overwrite = args.overwrite)
+    run = wandb.init(
+        dir=prjPaths,
+        project="gun_crypto_system",
+        name=args.exp_name,
+        config={
+            "n": args.n,
+            "training_steps": args.training_steps,
+            "batch_size": args.batch_size,
+            "learning_rate": args.learning_rate,
+            "clip_value": args.clip_value,
+    })
 
     if torch.cuda.device_count() > 0:
         gpu_available = True
@@ -270,14 +294,14 @@ def main():
 
     transform = transforms.Compose([
         transforms.ToTensor(),
-        transforms.Normalize((0.5,), (0.5,))
+        transforms.Normalize((0.1307,), (0.3081,))
     ])
 
-    dataset1 = datasets.MNIST('/homes/flomakin/gun_crypto_system/data',
+    dataset1 = datasets.MNIST('/homes/roma5okolow/gun_crypto_system/data',
                     train=True, download=True,
                     transform=transform)
 
-    dataset2 = datasets.MNIST('/homes/flomakin/gun_crypto_system/data',
+    dataset2 = datasets.MNIST('/homes/roma5okolow/gun_crypto_system/data',
                     train=False, download=True,
                     transform=transform)
     
@@ -290,16 +314,12 @@ def main():
     if args.run_type == "train":
         train(
             train_loader=train_loader,
-            test_loader=test_loader,
             gpu_available=gpu_available,
             prjPaths=prjPaths_,
-            n=args.n,
             training_steps=args.training_steps,
-            batch_size=args.batch_size,
             learning_rate=args.learning_rate,
             show_every_n_steps=args.show_every_n_steps,
             checkpoint_every_n_steps=args.checkpoint_every_n_steps,
-            verbose=args.verbose,
             clip_value=args.clip_value)
     # elif args.run_type == "inference":
     #     inference(gpu_available, prjPaths=prjPaths_)

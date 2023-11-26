@@ -15,7 +15,7 @@ class prjPaths:
         self.LIB_DIR = self.ROOT_MOD_DIR / 'lib'
         self.EXP_DIR = self.LIB_DIR / exp_name
 
-        self.CHECKPOINT_DIR = self.EXP_DIR / 'chkpts'
+        self.CHECKPOINT_DIR = self.EXP_DIR / 'ckpt'
         self.LOGS_DIR = self.EXP_DIR / 'logs'
 
         pth_exists_else_mk = lambda path: os.mkdir(path) if not os.path.exists(path) else None
@@ -36,7 +36,7 @@ def generate_key(size: int = 128, gpu_available: bool = True):
     else:
         return torch.randn(1, size)
     
-def generate_key_batch(size: int = 128, batchsize: int = 1, gpu_available: bool = True):
+def generate_key_batch(size: int = 784, batchsize: int = 1, gpu_available: bool = True):
     if gpu_available:
         return torch.randn(batchsize, 1, size).cuda()
     else:
