@@ -38,9 +38,9 @@ def generate_key(size: int = 128, gpu_available: bool = True):
     
 def generate_key_batch(size: int = 784, batchsize: int = 1, gpu_available: bool = True):
     if gpu_available:
-        return torch.randn(batchsize, 1, size).cuda()
+        return torch.randn(batchsize, size).cuda()
     else:
-        return torch.randn(batchsize, 1, size)
+        return torch.randn(batchsize, size)
 
 
 def get_logger(log_dir, run_type):

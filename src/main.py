@@ -129,7 +129,7 @@ def train(
                 """
                 for _ in range(num_minibatches):
 
-                    k = generate_key_batch(size=784, batchsize=data.shape[0], gpu_available=gpu_available)
+                    k = generate_key_batch(size=128, batchsize=data.shape[0], gpu_available=gpu_available)
 
                     # forward pass through alice and eve networks
                     

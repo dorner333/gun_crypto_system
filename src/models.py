@@ -32,8 +32,8 @@ class Encoder(nn.Module):
         # self.conv4 = nn.Conv2d(288, 784, kernel_size=5, stride=2, padding=1)
         # Выход [784, 1, 1]
         
-        self.fc1 = nn.Linear(784 + 784, 1174)
-        self.fc2 = nn.Linear(1174, 784)
+        self.fc1 = nn.Linear(784 + 128, 784 + 128)
+        self.fc2 = nn.Linear(784 + 128, 784)
         self.fc3 = nn.Linear(784, 784)
         
         # PReLU activation
@@ -63,8 +63,8 @@ class DecoderBOB(nn.Module):
     def __init__(self):
         super(DecoderBOB, self).__init__()
 
-        self.fc4 = nn.Linear(784 + 784, 1174)
-        self.fc5 = nn.Linear(1174, 784)
+        self.fc4 = nn.Linear(784 + 128, 784 + 128)
+        self.fc5 = nn.Linear(784 + 128, 784)
         self.fc6 = nn.Linear(784, 784)
 
         # Вход [784, 2, 2]
