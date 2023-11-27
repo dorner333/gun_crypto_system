@@ -235,7 +235,10 @@ def main():
     else:
         gpu_available = False
 
-    transform = transforms.ToTensor()
+    transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize((0.1307,), (0.3081,))
+    ])
 
     dataset1 = datasets.MNIST('/homes/roma5okolow/gun_crypto_system/data',
                     train=True, download=True,

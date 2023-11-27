@@ -13,25 +13,32 @@ class Encoder(nn.Module):
         # Вход [7, 7]
         self.conv3 = nn.Conv2d(32, 49, kernel_size=3, stride=2, padding=1)
         # Вход [4, 4]
-        self.fc1 = nn.Linear(784 + 784, 784)
-        self.fc2 = nn.Linear(784, 784)
         
+        self.key_expander1 = nn.Sequential(nn.SiLU(), nn.Linear(32, 16 * 2))
+        self.key_expander2 = nn.Sequential(nn.SiLU(), nn.Linear(32, 32 * 2))
+        self.key_expander3 = nn.Sequential(nn.SiLU(), nn.Linear(32, 49 * 2))
+
         # PReLU activation
         self.act = nn.ReLU()
         
-    def forward(self, x, k):
-        # x = torch.cat([x, k], dim=1)
-        # Проход через сверточные слои
-        x = self.act(self.conv1(x))
-        x = self.act(self.conv2(x))
-        x = self.act(self.conv3(x))
-        
-        # Примешиваем ключ
-        # x = torch.cat([x.view(x.shape[0], 1, 784), k], dim=1)
-        print(x.shape, k.shape)
-        x = torch.cat([x.flatten(start_dim=1), k], dim=-1)
-        x = self.act(self.fc1(x))
-        x = self.act(self.fc2(x))
+    def forward(self, x: torch.Tensor, k: torch.Tensor):
+        x = self.conv1(x)
+        k_expanded = self.key_expander1(k)[:, :, None, None]
+        scale, shift = k_expanded.chunk(2, dim=1)
+        x = x * (1 + scale) + shift
+        x = self.act(x)
+
+        x = self.conv2(x)
+        k_expanded = self.key_expander2(k)[:, :, None, None]
+        scale, shift = k_expanded.chunk(2, dim=1)
+        x = x * (1 + scale) + shift
+        x = self.act(x)
+
+        x = self.conv3(x)
+        k_expanded = self.key_expander3(k)[:, :, None, None]
+        scale, shift = k_expanded.chunk(2, dim=1)
+        x = x * (1 + scale) + shift
+        x = self.act(x)
         
         return x
     
@@ -39,24 +46,34 @@ class DecoderBOB(nn.Module):
     def __init__(self):
         super().__init__()
 
-        self.fc1 = nn.Linear(784 + 784, 784)
-        self.fc2 = nn.Linear(784, 784)
-
         self.deconv1 = nn.ConvTranspose2d(49, 32, kernel_size=3, stride=2, padding=1)
-        self.deconv2 = nn.ConvTranspose2d(32, 16, kernel_size=3, stride=2, padding=1)
-        self.deconv3 = nn.ConvTranspose2d(16, 1,  kernel_size=3, stride=2, padding=1)
+        self.deconv2 = nn.ConvTranspose2d(32, 16, kernel_size=3, stride=2, padding=1, output_padding=1)
+        self.deconv3 = nn.ConvTranspose2d(16, 1,  kernel_size=3, stride=2, padding=1, output_padding=1)
+
+        self.key_expander1 = nn.Sequential(nn.SiLU(), nn.Linear(32, 49 * 2))
+        self.key_expander2 = nn.Sequential(nn.SiLU(), nn.Linear(32, 32 * 2))
+        self.key_expander3 = nn.Sequential(nn.SiLU(), nn.Linear(32, 16 * 2))
 
         self.act = nn.ReLU()
 
     def forward(self, x, k):
-        x = torch.cat([x, k], dim=-1)
-        x = self.act(self.fc1(x))
-        x = self.act(self.fc2(x))
 
-        x = x.view(x.shape[0], 49, 4, 4)
-        x = self.act(self.deconv1(x))
-        x = self.act(self.deconv2(x))
-        x = F.sigmoid(self.deconv3(x))
+        k_expanded = self.key_expander1(k)[:, :, None, None]
+        scale, shift = k_expanded.chunk(2, dim=1)
+        x = x * (1 + scale) + shift
+        x = self.deconv1(x)
+        x = self.act(x)
+
+        k_expanded = self.key_expander2(k)[:, :, None, None]
+        scale, shift = k_expanded.chunk(2, dim=1)
+        x = x * (1 + scale) + shift
+        x = self.deconv2(x)
+        x = self.act(x)
+
+        k_expanded = self.key_expander3(k)[:, :, None, None]
+        scale, shift = k_expanded.chunk(2, dim=1)
+        x = x * (1 + scale) + shift
+        x = self.deconv3(x)
 
         return x
 
@@ -64,23 +81,16 @@ class DecoderEVA(nn.Module):
     def __init__(self):
         super().__init__()
 
-        self.fc1 = nn.Linear(784, 784)
-        self.fc2 = nn.Linear(784, 784)
-
         self.deconv1 = nn.ConvTranspose2d(49, 32, kernel_size=3, stride=2, padding=1)
-        self.deconv2 = nn.ConvTranspose2d(32, 16, kernel_size=3, stride=2, padding=1)
-        self.deconv3 = nn.ConvTranspose2d(16, 1,  kernel_size=3, stride=2, padding=1)
+        self.deconv2 = nn.ConvTranspose2d(32, 16, kernel_size=3, stride=2, padding=1, output_padding=1)
+        self.deconv3 = nn.ConvTranspose2d(16, 1,  kernel_size=3, stride=2, padding=1, output_padding=1)
 
         self.act = nn.ReLU()
 
     def forward(self, x):
-        x = self.act(self.fc1(x))
-        x = self.act(self.fc2(x))
-
-        x = x.view(x.shape[0], 49, 4, 4)
         x = self.act(self.deconv1(x))
         x = self.act(self.deconv2(x))
-        x = F.sigmoid(self.deconv3(x))
+        x = self.deconv3(x)
 
         return x
     
