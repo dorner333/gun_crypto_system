@@ -35,12 +35,12 @@ def get_args():
     
     parser.add_argument("--n",
                         type=int,
-                        default=784,
+                        default=196,
                         help="length of plaintext (message length)")
     
     parser.add_argument("--training_steps",
                         type=int,
-                        default=25000,
+                        default=10000,
                         help="number of training steps")
     
     parser.add_argument("--batch_size",
@@ -86,11 +86,18 @@ def train(
         show_every_n_steps,
         checkpoint_every_n_steps,
         clip_value,
-        aggregated_losses_every_n_steps=32,):
+        key_size,
+        aggregated_losses_every_n_steps=32):
 
     alice = Encoder()
     bob = DecoderBOB()
     eve = DecoderEVA()
+
+    wandb.config.update({
+        "alice_size": sum(p.numel() for p in alice.parameters()),
+        "bob_size": sum(p.numel() for p in bob.parameters()),
+        "eve_size": sum(p.numel() for p in eve.parameters())
+    })
 
     alice.train()
     bob.train()
@@ -129,7 +136,7 @@ def train(
                 """
                 for _ in range(num_minibatches):
 
-                    k = generate_key_batch(size=128, batchsize=data.shape[0], gpu_available=gpu_available)
+                    k = generate_key_batch(size=key_size, batchsize=data.shape[0], gpu_available=gpu_available)
 
                     # forward pass through alice and eve networks
                     
@@ -208,6 +215,60 @@ def train(
             torch.save(eve.state_dict(), os.path.join(prjPaths.CHECKPOINT_DIR, f"eve_epoch_{epoch}.pth"))
 
 
+def main():
+    args = get_args()
+    prjPaths_ = prjPaths(exp_name = args.exp_name, overwrite = args.overwrite)
+    run = wandb.init(
+        dir=prjPaths,
+        project="gun_crypto_system",
+        name=args.exp_name,
+        config={
+            "n": args.n,
+            "training_steps": args.training_steps,
+            "batch_size": args.batch_size,
+            "learning_rate": args.learning_rate,
+            "clip_value": args.clip_value,
+    })
+
+    if torch.cuda.device_count() > 0:
+        gpu_available = True
+    else:
+        gpu_available = False
+
+    transform = transforms.ToTensor()
+
+    dataset1 = datasets.MNIST('/homes/roma5okolow/gun_crypto_system/data',
+                    train=True, download=True,
+                    transform=transform)
+
+    dataset2 = datasets.MNIST('/homes/roma5okolow/gun_crypto_system/data',
+                    train=False, download=True,
+                    transform=transform)
+    
+    train_kwargs = {'batch_size': args.batch_size}
+    test_kwargs = {'batch_size': args.batch_size}
+
+    train_loader = torch.utils.data.DataLoader(dataset1, drop_last=True, **train_kwargs)
+    test_loader = torch.utils.data.DataLoader(dataset2, drop_last=True, **test_kwargs)
+
+    if args.run_type == "train":
+        train(
+            train_loader=train_loader,
+            gpu_available=gpu_available,
+            prjPaths=prjPaths_,
+            training_steps=args.training_steps,
+            learning_rate=args.learning_rate,
+            show_every_n_steps=args.show_every_n_steps,
+            checkpoint_every_n_steps=args.checkpoint_every_n_steps,
+            clip_value=args.clip_value,
+            key_size=args.n)
+    # elif args.run_type == "inference":
+    #     inference(gpu_available, prjPaths=prjPaths_)
+
+if __name__ == "__main__":
+    main()
+
+
 # def inference(gpu_available, prjPaths):
 #     alice = Encoder()
 #     bob = DecoderBOB()
@@ -270,59 +331,3 @@ def train(
         
 #         print("eve_ps_b:                     {}".format(list(itertools.chain.from_iterable([[i[:8], i[8:]]  for i in eve_ps_b]))))
 #         print("bob_ps_b:                     {}\n".format(list(itertools.chain.from_iterable([[i[:8], i[8:]]  for i in bob_ps_b]))))
-
-
-def main():
-    args = get_args()
-    prjPaths_ = prjPaths(exp_name = args.exp_name, overwrite = args.overwrite)
-    run = wandb.init(
-        dir=prjPaths,
-        project="gun_crypto_system",
-        name=args.exp_name,
-        config={
-            "n": args.n,
-            "training_steps": args.training_steps,
-            "batch_size": args.batch_size,
-            "learning_rate": args.learning_rate,
-            "clip_value": args.clip_value,
-    })
-
-    if torch.cuda.device_count() > 0:
-        gpu_available = True
-    else:
-        gpu_available = False
-
-    transform = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize((0.1307,), (0.3081,))
-    ])
-
-    dataset1 = datasets.MNIST('/homes/roma5okolow/gun_crypto_system/data',
-                    train=True, download=True,
-                    transform=transform)
-
-    dataset2 = datasets.MNIST('/homes/roma5okolow/gun_crypto_system/data',
-                    train=False, download=True,
-                    transform=transform)
-    
-    train_kwargs = {'batch_size': args.batch_size}
-    test_kwargs = {'batch_size': args.batch_size}
-
-    train_loader = torch.utils.data.DataLoader(dataset1, drop_last=True, **train_kwargs)
-    test_loader = torch.utils.data.DataLoader(dataset2, drop_last=True, **test_kwargs)
-
-    if args.run_type == "train":
-        train(
-            train_loader=train_loader,
-            gpu_available=gpu_available,
-            prjPaths=prjPaths_,
-            training_steps=args.training_steps,
-            learning_rate=args.learning_rate,
-            show_every_n_steps=args.show_every_n_steps,
-            checkpoint_every_n_steps=args.checkpoint_every_n_steps,
-            clip_value=args.clip_value)
-    # elif args.run_type == "inference":
-    #     inference(gpu_available, prjPaths=prjPaths_)
-
-if __name__ == "__main__":
-    main()
