@@ -85,11 +85,27 @@ class DecoderEVA(nn.Module):
         self.deconv2 = nn.ConvTranspose2d(32, 16, kernel_size=3, stride=2, padding=1, output_padding=1)
         self.deconv3 = nn.ConvTranspose2d(16, 1,  kernel_size=3, stride=2, padding=1, output_padding=1)
 
+        self.scale1 = nn.Parameter(torch.randn(1, 49, 1, 1))
+        self.scale2 = nn.Parameter(torch.randn(1, 32, 1, 1))
+        self.scale3 = nn.Parameter(torch.randn(1, 16, 1, 1))
+
+        self.shift1 = nn.Parameter(torch.randn(1, 49, 1, 1))
+        self.shift2 = nn.Parameter(torch.randn(1, 32, 1, 1))
+        self.shift3 = nn.Parameter(torch.randn(1, 16, 1, 1))
+
         self.act = nn.ReLU()
 
     def forward(self, x):
-        x = self.act(self.deconv1(x))
-        x = self.act(self.deconv2(x))
+
+        x = x * (1 + self.scale1) + self.shift1
+        x = self.deconv1(x)
+        x = self.act(x)
+
+        x = x * (1 + self.scale2) + self.shift2
+        x = self.deconv2(x)
+        x = self.act(x)
+
+        x = x * (1 + self.scale3) + self.shift3
         x = self.deconv3(x)
 
         return x
