@@ -60,19 +60,19 @@ class DecoderBOB(nn.Module):
 
         k_expanded = self.key_expander1(k)[:, :, None, None]
         scale, shift = k_expanded.chunk(2, dim=1)
-        x = x * (1 + scale) + shift
+        x = (x + shift) * (1 + scale)
         x = self.deconv1(x)
         x = self.act(x)
 
         k_expanded = self.key_expander2(k)[:, :, None, None]
         scale, shift = k_expanded.chunk(2, dim=1)
-        x = x * (1 + scale) + shift
+        x = (x + shift) * (1 + scale)
         x = self.deconv2(x)
         x = self.act(x)
 
         k_expanded = self.key_expander3(k)[:, :, None, None]
         scale, shift = k_expanded.chunk(2, dim=1)
-        x = x * (1 + scale) + shift
+        x = (x + shift) * (1 + scale)
         x = self.deconv3(x)
 
         return x
@@ -97,15 +97,15 @@ class DecoderEVA(nn.Module):
 
     def forward(self, x):
 
-        x = x * (1 + self.scale1) + self.shift1
+        x = (x + self.shift1) * (1 + self.scale1)
         x = self.deconv1(x)
         x = self.act(x)
 
-        x = x * (1 + self.scale2) + self.shift2
+        x = (x + self.shift2) * (1 + self.scale2)
         x = self.deconv2(x)
         x = self.act(x)
 
-        x = x * (1 + self.scale3) + self.shift3
+        x = (x + self.shift3) * (1 + self.scale3)
         x = self.deconv3(x)
 
         return x
