@@ -3,7 +3,7 @@ import torch.nn.functional as F
 import torch.nn as nn
 
 class Encoder(nn.Module):
-    def __init__(self,):
+    def __init__(self, key_size: int):
         super(Encoder, self).__init__()
         
         # Вход [1, 28, 28]
@@ -14,9 +14,9 @@ class Encoder(nn.Module):
         self.conv3 = nn.Conv2d(32, 49, kernel_size=3, stride=2, padding=1)
         # Вход [4, 4]
         
-        self.key_expander1 = nn.Sequential(nn.SiLU(), nn.Linear(32, 16 * 2))
-        self.key_expander2 = nn.Sequential(nn.SiLU(), nn.Linear(32, 32 * 2))
-        self.key_expander3 = nn.Sequential(nn.SiLU(), nn.Linear(32, 49 * 2))
+        self.key_expander1 = nn.Sequential(nn.Linear(key_size, 16 * 2), nn.SiLU())
+        self.key_expander2 = nn.Sequential(nn.Linear(key_size, 32 * 2), nn.SiLU())
+        self.key_expander3 = nn.Sequential(nn.Linear(key_size, 49 * 2), nn.SiLU())
 
         # PReLU activation
         self.act = nn.ReLU()
@@ -43,16 +43,16 @@ class Encoder(nn.Module):
         return x
     
 class DecoderBOB(nn.Module):
-    def __init__(self):
+    def __init__(self, key_size):
         super().__init__()
 
         self.deconv1 = nn.ConvTranspose2d(49, 32, kernel_size=3, stride=2, padding=1)
         self.deconv2 = nn.ConvTranspose2d(32, 16, kernel_size=3, stride=2, padding=1, output_padding=1)
         self.deconv3 = nn.ConvTranspose2d(16, 1,  kernel_size=3, stride=2, padding=1, output_padding=1)
 
-        self.key_expander1 = nn.Sequential(nn.SiLU(), nn.Linear(32, 49 * 2))
-        self.key_expander2 = nn.Sequential(nn.SiLU(), nn.Linear(32, 32 * 2))
-        self.key_expander3 = nn.Sequential(nn.SiLU(), nn.Linear(32, 16 * 2))
+        self.key_expander1 = nn.Sequential(nn.Linear(key_size, 49 * 2), nn.SiLU())
+        self.key_expander2 = nn.Sequential(nn.Linear(key_size, 32 * 2), nn.SiLU())
+        self.key_expander3 = nn.Sequential(nn.Linear(key_size, 16 * 2), nn.SiLU())
 
         self.act = nn.ReLU()
 

@@ -89,8 +89,8 @@ def train(
         key_size,
         aggregated_losses_every_n_steps=32):
 
-    alice = Encoder()
-    bob = DecoderBOB()
+    alice = Encoder(key_size=key_size)
+    bob = DecoderBOB(key_size=key_size)
     eve = DecoderEVA()
 
     wandb.config.update({
