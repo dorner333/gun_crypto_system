@@ -40,7 +40,7 @@ def get_args():
     
     parser.add_argument("--training_steps",
                         type=int,
-                        default=10000,
+                        default=5000,
                         help="number of training steps")
     
     parser.add_argument("--batch_size",
@@ -87,7 +87,8 @@ def train(
         checkpoint_every_n_steps,
         clip_value,
         key_size,
-        aggregated_losses_every_n_steps=32):
+        aggregated_losses_every_n_steps=32
+    ):
 
     alice = Encoder(key_size=key_size)
     bob = DecoderBOB(key_size=key_size)

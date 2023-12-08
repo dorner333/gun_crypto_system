@@ -19,7 +19,7 @@ class Encoder(nn.Module):
         self.key_expander3 = nn.Sequential(nn.Linear(key_size, 49 * 2), nn.SiLU())
 
         # PReLU activation
-        self.act = nn.ReLU()
+        self.act = nn.PReLU()
         
     def forward(self, x: torch.Tensor, k: torch.Tensor):
         x = self.conv1(x)
@@ -38,8 +38,8 @@ class Encoder(nn.Module):
         k_expanded = self.key_expander3(k)[:, :, None, None]
         scale, shift = k_expanded.chunk(2, dim=1)
         x = x * (1 + scale) + shift
-        x = self.act(x)
-        
+        x = x - x.min(1, keepdim=True)[0]
+        x = x / x.max(1, keepdim=True)[0]
         return x
     
 class DecoderBOB(nn.Module):
@@ -54,7 +54,7 @@ class DecoderBOB(nn.Module):
         self.key_expander2 = nn.Sequential(nn.Linear(key_size, 32 * 2), nn.SiLU())
         self.key_expander3 = nn.Sequential(nn.Linear(key_size, 16 * 2), nn.SiLU())
 
-        self.act = nn.ReLU()
+        self.act = nn.PReLU()
 
     def forward(self, x, k):
 
@@ -93,7 +93,7 @@ class DecoderEVA(nn.Module):
         self.shift2 = nn.Parameter(torch.randn(1, 32, 1, 1))
         self.shift3 = nn.Parameter(torch.randn(1, 16, 1, 1))
 
-        self.act = nn.ReLU()
+        self.act = nn.PReLU()
 
     def forward(self, x):
 
